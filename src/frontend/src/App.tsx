@@ -55,8 +55,10 @@ function App() {
       TotalPrice: Number(formData.totalPrice) // Upewniamy się, że to liczba
     }
 
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:7071/api';
+    
     try {
-      const response = await fetch('http://localhost:7071/api/reservation', {
+      const response = await fetch(`${API_URL}/reservation`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

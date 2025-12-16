@@ -1,0 +1,98 @@
+name: Deploy SmartHotel
+
+on:
+  push:
+    branches:
+      - master  
+env:
+  DOTNET_VERSION: '8.0.x'
+  NODE_VERSION: '18.x'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    # 1. Pobranie kodu
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # 2. Logowanie do Azure
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    # 3. Znalezienie nazw zasobów (Funkcji i Storage) w Grupie Zasobów
+    # Dzięki temu nie musimy wpisywać nazw na sztywno
+    - name: Get Resource Names
+      id: resources
+      run: |
+        # Znajdź nazwę Function App
+        FUNC_NAME=$(az functionapp list -g ${{ secrets.RESOURCE_GROUP_NAME }} --query "[0].name" -o tsv)
+        echo "FUNC_APP_NAME=$FUNC_NAME" >> $GITHUB_ENV
+        
+        # Znajdź nazwę Storage Account (używamy tego samego co dla funkcji lub dedykowanego pod frontend)
+        # Zakładam, że w grupie jest jeden główny storage
+        STORAGE_NAME=$(az storage account list -g ${{ secrets.RESOURCE_GROUP_NAME }} --query "[0].name" -o tsv)
+        echo "STORAGE_ACCOUNT_NAME=$STORAGE_NAME" >> $GITHUB_ENV
+        
+        echo "Znaleziono Funkcję: $FUNC_NAME"
+        echo "Znaleziono Storage: $STORAGE_NAME"
+
+    # --- BACKEND (C#) ---
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Build Backend
+      run: |
+        dotnet build ./src/backend/backend.csproj --configuration Release
+        dotnet publish ./src/backend/backend.csproj -c Release -o ./published
+
+    - name: Deploy to Azure Functions
+      uses: azure/functions-action@v1
+      with:
+        app-name: ${{ env.FUNC_APP_NAME }}
+        package: './published'
+
+    # --- FRONTEND (React) ---
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Install and Build Frontend
+      working-directory: ./src/frontend
+      run: |
+        npm install
+        # Wstrzykujemy prawdziwy adres URL backendu podczas budowania frontendu
+        export VITE_API_URL=https://${{ env.FUNC_APP_NAME }}.azurewebsites.net/api
+        npm run build
+
+    # --- KONFIGURACJA HOSTINGU ---
+    # Włączamy tryb "Static Website" na koncie Storage
+    - name: Enable Static Website on Storage
+      run: |
+        az storage blob service-properties update --account-name ${{ env.STORAGE_ACCOUNT_NAME }} --static-website --404-document index.html --index-document index.html --auth-mode key
+
+    # Wgrywamy pliki frontendu do kontenera $web
+    - name: Deploy Frontend to Storage
+      uses: azure/CLI@v1
+      with:
+        inlineScript: |
+          az storage blob upload-batch --account-name ${{ env.STORAGE_ACCOUNT_NAME }} --source ./frontend/dist --destination '$web' --auth-mode key --overwrite
+
+    # --- CORS (BARDZO WAŻNE) ---
+    # Pobieramy adres URL naszej nowej strony i dodajemy go do CORS w Backendzie
+    - name: Configure CORS
+      run: |
+        # Pobierz URL endpointu webowego
+        WEB_URL=$(az storage account show -n ${{ env.STORAGE_ACCOUNT_NAME }} -g ${{ secrets.RESOURCE_GROUP_NAME }} --query "primaryEndpoints.web" -o tsv)
+        # Usuń końcowy ukośnik (trailing slash) dla poprawności CORS
+        WEB_URL=${WEB_URL%/}
+        
+        echo "Konfigurowanie CORS dla adresu: $WEB_URL"
+        az functionapp cors add -g ${{ secrets.RESOURCE_GROUP_NAME }} -n ${{ env.FUNC_APP_NAME }} --allowed-origins $WEB_URL
+        
+        echo "::notice::Twój Frontend jest dostępny pod adresem: $WEB_URL"

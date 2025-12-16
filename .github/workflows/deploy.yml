@@ -81,7 +81,7 @@ jobs:
       uses: azure/CLI@v1
       with:
         inlineScript: |
-          az storage blob upload-batch --account-name ${{ env.STORAGE_ACCOUNT_NAME }} --source ./frontend/dist --destination '$web' --auth-mode key --overwrite
+          az storage blob upload-batch --account-name ${{ env.STORAGE_ACCOUNT_NAME }} --source ./src/frontend/dist --destination '$web' --auth-mode key --overwrite
 
     # --- CORS (BARDZO WAŻNE) ---
     # Pobieramy adres URL naszej nowej strony i dodajemy go do CORS w Backendzie

@@ -13,7 +13,6 @@ namespace SmartHotel.Backend.Functions
         private readonly ILogger _logger;
         private readonly HotelDbContext _dbContext;
 
-        // Wstrzykiwanie zależności (Dependency Injection)
         public CreateReservation(ILoggerFactory loggerFactory, HotelDbContext dbContext)
         {
             _logger = loggerFactory.CreateLogger<CreateReservation>();
@@ -21,52 +20,63 @@ namespace SmartHotel.Backend.Functions
         }
 
         [Function("CreateReservation")]
-        public async Task<HttpResponseData> Run(
+        public async Task<MultiResponse> Run(
             [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "reservation")] HttpRequestData req)
         {
-            _logger.LogInformation("A request for a new reservation has been received.");
+            _logger.LogInformation("Otrzymano nową rezerwację.");
 
-            // 1. Odczytanie treści żądania
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             var data = JsonConvert.DeserializeObject<Reservation>(requestBody);
 
+            // Walidacja
             if (data == null || string.IsNullOrEmpty(data.GuestName))
             {
                 var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badResponse.WriteStringAsync("Incorrect booking details.");
-                return badResponse;
+                await badResponse.WriteStringAsync("Brak wymaganych danych.");
+                return new MultiResponse { HttpResponse = badResponse };
             }
 
-            // 2. Logika biznesowa (prosta walidacja)
-            if (data.CheckOutDate <= data.CheckInDate)
-            {
-                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badResponse.WriteStringAsync("The departure date must be later than the arrival date.");
-                return badResponse;
-            }
-
-            // 3. Zapis do bazy danych
+            // Zapis do SQL (Entity Framework)
             try 
             {
-                data.Id = Guid.NewGuid(); // Upewniamy się, że ID jest nowe
+                data.Id = Guid.NewGuid();
                 data.CreatedAt = DateTime.UtcNow;
                 
                 await _dbContext.Reservations.AddAsync(data);
                 await _dbContext.SaveChangesAsync();
 
-                _logger.LogInformation($"Reservation created for: {data.GuestName}, ID: {data.Id}");
+                _logger.LogInformation($"Zapisano w SQL. ID: {data.Id}");
 
+                // Sukces - przygotowujemy odpowiedź HTTP
                 var response = req.CreateResponse(HttpStatusCode.OK);
                 await response.WriteAsJsonAsync(new { Status = "Success", ReservationId = data.Id });
-                return response;
+
+                // Zwracamy obiekt, który trafi i do HTTP, i na Kolejkę
+                return new MultiResponse
+                {
+                    HttpResponse = response,
+                    // To trafi na kolejkę jako JSON:
+                    QueueMessage = JsonConvert.SerializeObject(new { data.Id, data.GuestName }) 
+                };
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error while writing to the database.");
+                _logger.LogError(ex, "Błąd zapisu do bazy.");
                 var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
-                await errorResponse.WriteStringAsync("A server error occurred.");
-                return errorResponse;
+                return new MultiResponse { HttpResponse = errorResponse };
             }
         }
+    }
+
+    // Klasa pomocnicza do zwracania wielu wyjść naraz
+    public class MultiResponse
+    {
+        [HttpResult]
+        public HttpResponseData? HttpResponse { get; set; }
+
+        // Ta adnotacja wrzuca wiadomość na kolejkę 'rezerwacje-queue'
+        // Connection = "AzureWebJobsStorage" to domyślne konto storage funkcji
+        [QueueOutput("rezerwacje-queue", Connection = "AzureWebJobsStorage")]
+        public string? QueueMessage { get; set; }
     }
 }

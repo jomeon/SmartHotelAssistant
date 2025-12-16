@@ -5,20 +5,20 @@ using Microsoft.EntityFrameworkCore;
 using SmartHotel.Backend.Data;
 using System;
 
+
 var host = new HostBuilder()
-    .ConfigureFunctionsWebApplication()
+    .ConfigureFunctionsWebApplication() // (zamiast ConfigureFunctionsWorkerDefaults)
     .ConfigureServices(services =>
     {
-        // Rejestracja Application Insights 
         services.AddApplicationInsightsTelemetryWorkerService();
         services.ConfigureFunctionsApplicationInsights();
 
-        // Rejestracja Bazy Danych
-        // Pobieramy Connection String ze zmiennych środowiskowych
-        string connectionString = Environment.GetEnvironmentVariable("SqlConnectionString");
-
+        // Rejestracja bazy danych
         services.AddDbContext<HotelDbContext>(options =>
-            options.UseSqlServer(connectionString));
+        {
+            var connectionString = Environment.GetEnvironmentVariable("SqlConnectionString");
+            options.UseSqlServer(connectionString);
+        });
     })
     .Build();
 

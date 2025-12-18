@@ -1,6 +1,7 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.EntityFrameworkCore; // WAŻNE: Potrzebne do obsługi bazy
 using Newtonsoft.Json;
 using SmartHotel.Backend.Data;
 using SmartHotel.Backend.Models;
@@ -28,35 +29,66 @@ namespace SmartHotel.Backend.Functions
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             var data = JsonConvert.DeserializeObject<Reservation>(requestBody);
 
-            // Walidacja
-            if (data == null || string.IsNullOrEmpty(data.GuestName))
+            // --- WALIDACJA WSTĘPNA ---
+            // Sprawdzamy czy mamy RoomId i Email (który dodałeś w bazie)
+            if (data == null || data.RoomId == 0 || string.IsNullOrEmpty(data.GuestEmail))
             {
                 var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badResponse.WriteStringAsync("Brak wymaganych danych.");
+                await badResponse.WriteStringAsync("Brak wymaganych danych (RoomId, Email).");
                 return new MultiResponse { HttpResponse = badResponse };
             }
 
-            // Zapis do SQL (Entity Framework)
+            // --- 1. SPRAWDZENIE DOSTĘPNOŚCI (To jest to, czego brakowało) ---
+            // Zapytanie SQL sprawdza, czy istnieje rezerwacja, która nakłada się na nasze daty
+            bool isOccupied = await _dbContext.Reservations.AnyAsync(r => 
+                r.RoomId == data.RoomId &&
+                data.CheckInDate < r.CheckOutDate && 
+                r.CheckInDate < data.CheckOutDate
+            );
+
+            if (isOccupied)
+            {
+                // Zwracamy błąd 409 Conflict - Frontend to obsłuży i wyświetli komunikat
+                var conflictResponse = req.CreateResponse(HttpStatusCode.Conflict);
+                await conflictResponse.WriteStringAsync("Ten pokój jest już zajęty w wybranym terminie!");
+                return new MultiResponse { HttpResponse = conflictResponse };
+            }
+
+            // --- 2. POBRANIE CENY POKOJU ---
+            // Nie ufamy cenie z frontendu. Pobieramy cenę z bazy danych pokoi.
+            var room = await _dbContext.Rooms.FindAsync(data.RoomId);
+            if(room == null) 
+            {
+                 var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                 await badResponse.WriteStringAsync("Taki pokój nie istnieje.");
+                 return new MultiResponse { HttpResponse = badResponse };
+            }
+
+            // Obliczamy liczbę nocy
+            int nights = (data.CheckOutDate - data.CheckInDate).Days;
+            if (nights < 1) nights = 1;
+
+            // Ustawiamy dane systemowe
+            data.TotalPrice = room.PricePerNight * nights; // Obliczona cena
+            data.Id = Guid.NewGuid();
+            data.CreatedAt = DateTime.UtcNow;
+
+            // --- 3. ZAPIS DO BAZY ---
             try 
             {
-                data.Id = Guid.NewGuid();
-                data.CreatedAt = DateTime.UtcNow;
-                
                 await _dbContext.Reservations.AddAsync(data);
                 await _dbContext.SaveChangesAsync();
 
                 _logger.LogInformation($"Zapisano w SQL. ID: {data.Id}");
 
-                // Sukces - przygotowujemy odpowiedź HTTP
                 var response = req.CreateResponse(HttpStatusCode.OK);
-                await response.WriteAsJsonAsync(new { Status = "Success", ReservationId = data.Id });
+                // Zwracamy Price, żeby Frontend mógł wyświetlić cenę zamiast "undefined"
+                await response.WriteAsJsonAsync(new { Status = "Success", ReservationId = data.Id, Price = data.TotalPrice });
 
-                // Zwracamy obiekt, który trafi i do HTTP, i na Kolejkę
                 return new MultiResponse
                 {
                     HttpResponse = response,
-                    // To trafi na kolejkę jako JSON:
-                    QueueMessage = JsonConvert.SerializeObject(new { data.Id, data.GuestName }) 
+                    QueueMessage = JsonConvert.SerializeObject(new { data.Id, data.GuestEmail, Type = "Confirmation" }) 
                 };
             }
             catch (Exception ex)
@@ -68,14 +100,11 @@ namespace SmartHotel.Backend.Functions
         }
     }
 
-    // Klasa pomocnicza do zwracania wielu wyjść naraz
     public class MultiResponse
     {
         [HttpResult]
         public HttpResponseData? HttpResponse { get; set; }
 
-        // Ta adnotacja wrzuca wiadomość na kolejkę 'rezerwacje-queue'
-        // Connection = "AzureWebJobsStorage" to domyślne konto storage funkcji
         [QueueOutput("rezerwacje-queue", Connection = "AzureWebJobsStorage")]
         public string? QueueMessage { get; set; }
     }

@@ -18,8 +18,7 @@ namespace SmartHotel.Backend.Functions
         {
             _logger.LogInformation($"[INTEGRACJA] Przetwarzanie rezerwacji z kolejki: {myQueueItem}");
             
-            // Tutaj normalnie byłby kod wysyłania e-maila (SendGrid / SMTP)
-            // Na potrzeby projektu logowanie wystarczy jako dowód działania.
+            // Symulacja wysyłki
             _logger.LogWarning($"-> Wysłano e-mail z potwierdzeniem do klienta! (Symulacja)");
         }
     }

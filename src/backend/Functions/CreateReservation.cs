@@ -1,7 +1,7 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using Microsoft.EntityFrameworkCore; // WAŻNE: Potrzebne do obsługi bazy
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
 using SmartHotel.Backend.Data;
 using SmartHotel.Backend.Models;
@@ -29,8 +29,7 @@ namespace SmartHotel.Backend.Functions
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             var data = JsonConvert.DeserializeObject<Reservation>(requestBody);
 
-            // --- WALIDACJA WSTĘPNA ---
-            // Sprawdzamy czy mamy RoomId i Email (który dodałeś w bazie)
+            // --- WALIDACJA 1: CZY SĄ DANE? ---
             if (data == null || data.RoomId == 0 || string.IsNullOrEmpty(data.GuestEmail))
             {
                 var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
@@ -38,8 +37,24 @@ namespace SmartHotel.Backend.Functions
                 return new MultiResponse { HttpResponse = badResponse };
             }
 
-            // --- 1. SPRAWDZENIE DOSTĘPNOŚCI (To jest to, czego brakowało) ---
-            // Zapytanie SQL sprawdza, czy istnieje rezerwacja, która nakłada się na nasze daty
+            // --- WALIDACJA 2: LOGIKA DAT (TO DODAJEMY) ---
+            // Data wyjazdu musi być późniejsza niż data przyjazdu
+            if (data.CheckOutDate <= data.CheckInDate)
+            {
+                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                await badResponse.WriteStringAsync("Data wymeldowania musi być późniejsza niż zameldowania!");
+                return new MultiResponse { HttpResponse = badResponse };
+            }
+
+            // Opcjonalnie: Blokada rezerwacji wstecz (w przeszłości)
+            if (data.CheckInDate.Date < DateTime.UtcNow.Date)
+            {
+                 var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                 await badResponse.WriteStringAsync("Nie można rezerwować dat w przeszłości.");
+                 return new MultiResponse { HttpResponse = badResponse };
+            }
+
+            // --- 3. SPRAWDZENIE DOSTĘPNOŚCI (SQL) ---
             bool isOccupied = await _dbContext.Reservations.AnyAsync(r => 
                 r.RoomId == data.RoomId &&
                 data.CheckInDate < r.CheckOutDate && 
@@ -48,14 +63,12 @@ namespace SmartHotel.Backend.Functions
 
             if (isOccupied)
             {
-                // Zwracamy błąd 409 Conflict - Frontend to obsłuży i wyświetli komunikat
                 var conflictResponse = req.CreateResponse(HttpStatusCode.Conflict);
                 await conflictResponse.WriteStringAsync("Ten pokój jest już zajęty w wybranym terminie!");
                 return new MultiResponse { HttpResponse = conflictResponse };
             }
 
-            // --- 2. POBRANIE CENY POKOJU ---
-            // Nie ufamy cenie z frontendu. Pobieramy cenę z bazy danych pokoi.
+            // --- 4. POBRANIE CENY I ZAPIS ---
             var room = await _dbContext.Rooms.FindAsync(data.RoomId);
             if(room == null) 
             {
@@ -64,16 +77,12 @@ namespace SmartHotel.Backend.Functions
                  return new MultiResponse { HttpResponse = badResponse };
             }
 
-            // Obliczamy liczbę nocy
             int nights = (data.CheckOutDate - data.CheckInDate).Days;
-            if (nights < 1) nights = 1;
-
-            // Ustawiamy dane systemowe
-            data.TotalPrice = room.PricePerNight * nights; // Obliczona cena
+            
+            data.TotalPrice = room.PricePerNight * nights;
             data.Id = Guid.NewGuid();
             data.CreatedAt = DateTime.UtcNow;
 
-            // --- 3. ZAPIS DO BAZY ---
             try 
             {
                 await _dbContext.Reservations.AddAsync(data);
@@ -82,7 +91,6 @@ namespace SmartHotel.Backend.Functions
                 _logger.LogInformation($"Zapisano w SQL. ID: {data.Id}");
 
                 var response = req.CreateResponse(HttpStatusCode.OK);
-                // Zwracamy Price, żeby Frontend mógł wyświetlić cenę zamiast "undefined"
                 await response.WriteAsJsonAsync(new { Status = "Success", ReservationId = data.Id, Price = data.TotalPrice });
 
                 return new MultiResponse

@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react'
+import ReservationForm from './components/ReservationForm';
+import MyReservations from './components/MyReservations';
+import RoomSchedule from './components/RoomSchedule';
 
 // --- TYPY DANYCH ---
 interface OccupiedDate {
@@ -58,6 +61,12 @@ function App() {
   useEffect(() => {
     fetchRooms();
   }, []);
+
+  // --- OBSŁUGA ZMIANY FORMULARZA --- 
+  const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setFormData(prevData => ({ ...prevData, [name]: value }));
+  };
 
   // --- OBSŁUGA FORMULARZA REZERWACJI ---
   const handleBookSubmit = async (e: React.FormEvent) => {
@@ -153,127 +162,33 @@ function App() {
           
           {/* WIDOK: REZERWACJA */}
           {view === 'book' && (
-            <form onSubmit={handleBookSubmit}>
-              <h4 className="mb-3">Zarezerwuj pobyt</h4>
-              
-              <div className="row">
-                <div className="col-md-6 mb-3">
-                  <label>Imię i Nazwisko</label>
-                  <input required type="text" className="form-control" 
-                    value={formData.guestName} 
-                    onChange={e => setFormData({...formData, guestName: e.target.value})} />
-                </div>
-                <div className="col-md-6 mb-3">
-                  <label>E-mail</label>
-                  <input required type="email" className="form-control" 
-                    value={formData.guestEmail} 
-                    onChange={e => setFormData({...formData, guestEmail: e.target.value})} />
-                </div>
-              </div>
-
-              <div className="mb-3">
-                <label>Wybierz Pokój</label>
-                <select required className="form-select" 
-                  value={formData.roomId} 
-                  onChange={e => setFormData({...formData, roomId: e.target.value})}>
-                  <option value="">-- Wybierz z listy --</option>
-                  {rooms.map(room => (
-                    <option key={room.Id} value={room.Id}>
-                      Pokój {room.RoomNumber} ({room.Type}) - {room.PricePerNight} PLN/noc
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="row">
-                <div className="col-md-6 mb-3">
-                  <label>Od</label>
-                  <input required type="date" className="form-control" 
-                    value={formData.checkInDate} 
-                    onChange={e => setFormData({...formData, checkInDate: e.target.value})} />
-                </div>
-                <div className="col-md-6 mb-3">
-                  <label>Do</label>
-                  <input required type="date" className="form-control" 
-                    value={formData.checkOutDate} 
-                    onChange={e => setFormData({...formData, checkOutDate: e.target.value})} />
-                </div>
-              </div>
-
-              <button type="submit" className="btn btn-primary w-100" disabled={loading}>
-                {loading ? 'Przetwarzanie...' : 'Zatwierdź Rezerwację'}
-              </button>
-            </form>
+            <ReservationForm 
+              formData={formData}
+              rooms={rooms}
+              loading={loading}
+              onFormChange={handleFormChange}
+              onSubmit={handleBookSubmit}
+            />
           )}
 
           {/* WIDOK: MOJE REZERWACJE */}
           {view === 'check' && (
-            <div>
-              <h4 className="mb-3">Wyszukaj rezerwacje</h4>
-              <form onSubmit={handleCheckSubmit} className="d-flex gap-2 mb-4">
-                <input required type="email" className="form-control" placeholder="Podaj swój e-mail..."
-                  value={checkEmail} onChange={e => setCheckEmail(e.target.value)} />
-                <button type="submit" className="btn btn-secondary">Szukaj</button>
-              </form>
-
-              {myReservations.length > 0 && (
-                <table className="table table-striped">
-                  <thead>
-                    <tr>
-                      <th>Pokój</th>
-                      <th>Termin</th>
-                      <th>Koszt</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {myReservations.map(res => (
-                      <tr key={res.Id}>
-                        <td>{res.RoomNumber} <small className="text-muted">({res.RoomType})</small></td>
-                        <td>{formatDate(res.CheckInDate)} ➝ {formatDate(res.CheckOutDate)}</td>
-                        <td>{res.TotalPrice} PLN</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+            <MyReservations
+              checkEmail={checkEmail}
+              myReservations={myReservations}
+              loading={loading}
+              onEmailChange={e => setCheckEmail(e.target.value)}
+              onSubmit={handleCheckSubmit}
+              formatDate={formatDate}
+            />
           )}
 
           {/* WIDOK: GRAFIK (NOWY) */}
           {view === 'schedule' && (
-            <div>
-               <h4 className="mb-4">Dostępność Pokoi</h4>
-               <div className="row">
-                 {rooms.map(room => (
-                   <div className="col-md-6 mb-4" key={room.Id}>
-                     <div className="card h-100 border-light shadow-sm">
-                       <div className="card-header d-flex justify-content-between align-items-center">
-                         <strong>🚪 Pokój {room.RoomNumber}</strong>
-                         <span className="badge bg-secondary">{room.Type}</span>
-                       </div>
-                       <div className="card-body">
-                         <p className="card-text mb-2">
-                           <small>Cena: {room.PricePerNight} PLN | Pojemność: {room.Capacity} os.</small>
-                         </p>
-                         
-                         <h6 className="mt-3 text-muted">Zajęte terminy:</h6>
-                         {room.OccupiedDates && room.OccupiedDates.length > 0 ? (
-                           <ul className="list-group list-group-flush">
-                             {room.OccupiedDates.map((d, index) => (
-                               <li key={index} className="list-group-item list-group-item-danger py-1">
-                                 🔒 {formatDate(d.CheckInDate)} — {formatDate(d.CheckOutDate)}
-                               </li>
-                             ))}
-                           </ul>
-                         ) : (
-                           <div className="alert alert-success py-2 mb-0">✨ Obecnie wolny (brak przyszłych rezerwacji)</div>
-                         )}
-                       </div>
-                     </div>
-                   </div>
-                 ))}
-               </div>
-            </div>
+            <RoomSchedule
+              rooms={rooms}
+              formatDate={formatDate}
+            />
           )}
 
           {/* KOMUNIKATY GLOBALNE */}

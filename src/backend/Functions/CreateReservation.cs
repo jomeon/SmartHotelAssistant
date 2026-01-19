@@ -27,11 +27,14 @@ namespace SmartHotel.Backend.Functions
             _logger.LogInformation("Otrzymano nową rezerwację.");
 
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            _logger.LogInformation($"Request body: {requestBody}");
+
             var data = JsonConvert.DeserializeObject<Reservation>(requestBody);
 
             // --- WALIDACJA 1: CZY SĄ DANE? ---
             if (data == null || data.RoomId == 0 || string.IsNullOrEmpty(data.GuestEmail))
             {
+                _logger.LogWarning("Błąd walidacji: Brak wymaganych danych (RoomId, Email) lub dane są niekompletne.");
                 var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
                 await badResponse.WriteStringAsync("Brak wymaganych danych (RoomId, Email).");
                 return new MultiResponse { HttpResponse = badResponse };
@@ -41,6 +44,7 @@ namespace SmartHotel.Backend.Functions
             // Data wyjazdu musi być późniejsza niż data przyjazdu
             if (data.CheckOutDate <= data.CheckInDate)
             {
+                _logger.LogWarning($"Błąd walidacji: Data wymeldowania ({data.CheckOutDate}) jest wcześniejsza lub równa dacie zameldowania ({data.CheckInDate}).");
                 var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
                 await badResponse.WriteStringAsync("Data wymeldowania musi być późniejsza niż zameldowania!");
                 return new MultiResponse { HttpResponse = badResponse };
@@ -49,6 +53,7 @@ namespace SmartHotel.Backend.Functions
             // Opcjonalnie: Blokada rezerwacji wstecz (w przeszłości)
             if (data.CheckInDate.Date < DateTime.UtcNow.Date)
             {
+                 _logger.LogWarning($"Błąd walidacji: Próba rezerwacji daty w przeszłości ({data.CheckInDate}).");
                  var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
                  await badResponse.WriteStringAsync("Nie można rezerwować dat w przeszłości.");
                  return new MultiResponse { HttpResponse = badResponse };
@@ -63,6 +68,7 @@ namespace SmartHotel.Backend.Functions
 
             if (isOccupied)
             {
+                _logger.LogWarning($"Pokój {data.RoomId} jest już zajęty w terminie od {data.CheckInDate} do {data.CheckOutDate}.");
                 var conflictResponse = req.CreateResponse(HttpStatusCode.Conflict);
                 await conflictResponse.WriteStringAsync("Ten pokój jest już zajęty w wybranym terminie!");
                 return new MultiResponse { HttpResponse = conflictResponse };
@@ -72,6 +78,7 @@ namespace SmartHotel.Backend.Functions
             var room = await _dbContext.Rooms.FindAsync(data.RoomId);
             if(room == null) 
             {
+                 _logger.LogWarning($"Pokój o ID {data.RoomId} nie istnieje.");
                  var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
                  await badResponse.WriteStringAsync("Taki pokój nie istnieje.");
                  return new MultiResponse { HttpResponse = badResponse };

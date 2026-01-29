@@ -45,3 +45,5 @@ _nc_
 # OS generated files
 .DS_Store
 Thumbs.db
+
+*.tfvars

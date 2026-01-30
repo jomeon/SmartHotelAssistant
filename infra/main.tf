@@ -73,8 +73,9 @@ resource "azurerm_linux_function_app" "function_app" {
   }
 
   app_settings = {
-    "FUNCTIONS_WORKER_RUNTIME" = "dotnet-isolated"
-  }
+      "FUNCTIONS_WORKER_RUNTIME" = "dotnet-isolated"
+      "SqlConnectionString" = "Server=tcp:${azurerm_mssql_server.sqlserver.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.db.name};Persist Security Info=False;User ID=${azurerm_mssql_server.sqlserver.administrator_login};Password=${var.sql_admin_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+    }
 }
 
 resource "azurerm_mssql_server" "sqlserver" {
